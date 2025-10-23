@@ -1,0 +1,346 @@
+---
+title: "Cognitive Reserve"
+author: "Rik Henson"
+date: "2025-09-11"
+output: html_document
+---
+
+Some simulations to accompany paper on "Re-thinking Cognitive Reserve" by Rik.Henson@mrc-cbu.cam.ac.uk
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(ggpubr)
+library(reshape)
+library(MASS)
+```
+
+## Some functions
+
+This one defines basic trajectory of ageing, as "f(age) = B + C.(age - age0)^D", where B = Baseline (when age=age0), eg 100, C is the linear scaling (normally negative), eg -0.01, and D is the nonlinear exponent (normally positive), eg 2.
+
+```{r}
+f_x <- function(x, x0 = 18, baseline=100, scaling=-0.01, exponent=2) baseline + scaling * (x-x0)^exponent
+```
+
+This one just plots trajectories of many people (passed in a data frame):
+
+```{r}
+plot_df <- function(df, x_var, y_var, x_lab, y_lab, g_title="", cols = rep("gray", length(unique(df$people))))
+{
+  people <- unique(df$people)
+  
+  g <- ggplot()
+  for (person in people) {
+     #ind <- which(df$people == person)
+     #g <- g + geom_line(aes(x=df$ages[ind], y=df$brains[ind]), colour=cols[person])
+     data <- df[df$people == person,]
+     g <- g + geom_line(data=data, aes(x=!!rlang::sym(x_var), y=!!rlang::sym(y_var)), colour=cols[person])
+  }
+  
+  g <-g + xlab(x_lab) + ylab(y_lab) + ggtitle(g_title) 
+
+  return(g)
+}
+```
+
+This one generates the data frame used for plotting above:
+
+```{r}
+gen_df <- function(age, baseline, scaling, exponent)
+{
+people <- numeric(0)
+ages <- numeric(0)
+brains <- numeric(0)
+
+num_people = length(baseline)
+
+for (person in seq(1,num_people)) {
+  brain <- f_x(age, min(age), baseline[person], scaling[person], exponent[person]) 
+  brains <- append(brains, brain)
+  people <- append(people, rep(person, num_timepoints))
+  ages <- append(ages, age)
+}
+
+return(data.frame(people, ages, brains))
+}
+```
+
+This last function finds a person whose ageing parameters (B, C and D above) are closest to those requested (in "values"):
+
+```{r}
+select_closest <- function(baselines, scalings, exponents, values)
+{
+  sdb <- sd(baselines); if (sdb==0) sdb=1
+  sds <- sd(scalings);  if (sds==0) sds=1
+  sde <- sd(exponents); if (sde==0) sde=1
+  
+  distances <- ((baselines-values[1])/sdb)^2 + ((scalings-values[2])/sds)^2 + ((exponents-values[3])/sde)^2
+  
+  closest <- which(distances == min(distances))
+  return(list("closest"=closest, "distances"=as.matrix(distances)))
+}
+```
+
+## Generate parameters
+
+Generate ageing parameters for two brain properties that covary to a certain extent (eg 0.5):
+
+```{r}
+num_people <- 1000
+age <- seq(18,88,1)
+num_timepoints <- length(age)
+
+Means =  matrix(c(1, 1), ncol=2)
+Cov = matrix(c(1, 0.5,
+               0.5, 1), 
+            nrow = 2, ncol = 2, byrow = TRUE)
+
+baseline_order <- 1e2
+scaling_order  <- -1e-2
+exponent_order <- 1.7
+```
+
+## Reserve vs Maintenance (Brain/Cognition against Age, Figure 2 in paper)
+
+Generate and plot brain-age trajectories in people who vary in baseline but not rate of change (Reserve). Select two people with high and low reserve.
+
+```{r}
+set.seed(1)
+baseline <- mvrnorm(num_people, mu = baseline_order*Means, Sigma = (baseline_order/10)*Cov) #(2^2)*Cov)
+scaling  <- mvrnorm(num_people, mu = scaling_order*Means, Sigma = 0*Cov) #(scaling_order/10)*Cov)
+exponent <- mvrnorm(num_people, mu = exponent_order*Means, Sigma = 0*Cov) #(0.1^2)*Cov)
+
+brain_property <- gen_df(age, baseline[,1], scaling[,1], exponent[,1])
+df_plot = brain_property[seq(1,100*length(age)),]
+
+g <- plot_df(df_plot, x_var="ages", y_var="brains", x_lab="Age", y_lab="Brain/Cognition", g_title = "Reserve")
+
+values <- c(110, mean(scaling), mean(exponent))
+person1 = select_closest(baseline[,1], scaling[,1], exponent[,1], values)$closest
+
+values <- c(90, mean(scaling), mean(exponent))
+person2 <- select_closest(baseline[,1], scaling[,1], exponent[,1], values)$closest
+
+df1 <- subset(brain_property, people==person1)
+g1 <- g + geom_line(data=df1, aes(x=ages, y=brains), color = "green")
+df2 <- subset(brain_property, people==person2)
+g1 <- g1 + geom_line(data=df2, aes(x=ages, y=brains), color = "red")
+
+x1 <- 68
+x2 <- 78
+
+y11 <- df1$brains[df1$ages==x1]
+y12 <- df1$brains[df1$ages==x2]
+
+g1 <- g1 + geom_segment(aes(x = x1, y = y11, xend = x2, yend = y12), arrow = arrow(length = unit(0.5, "cm")), color="green", linewidth = 2)
+
+y21 <- df2$brains[df2$ages==x1]
+y22 <- df2$brains[df2$ages==x2]
+
+g1 <- g1 + geom_segment(aes(x = x1, y = y21, xend = x2, yend = y22), arrow = arrow(length = unit(0.5, "cm")), color="red", linewidth = 2)
+
+g1 <- g1 + geom_hline(yintercept=80, linetype="dashed", color = "black")
+g1 <- g1 + ylim(68, 112)
+
+g1              
+ggsave("Fig2a.png")    
+```
+
+Generate and plot brain-age trajectories in people who vary in exponent but not baseline (Maintenance). Select two people with high and low maintanece (exponents).
+
+```{r}
+baseline <- mvrnorm(num_people, mu = baseline_order*Means, Sigma = 0*Cov) #(baseline_order/10)*Cov) #(2^2)*Cov)
+scaling  <- mvrnorm(num_people, mu = scaling_order*Means, Sigma = 0*Cov) #(scaling_order/10)*Cov)
+exponent <- mvrnorm(num_people, mu = exponent_order*Means, Sigma = (exponent_order/500)*Cov) #(0.1^2)*Cov)
+
+brain_property <- gen_df(age, baseline[,1], scaling[,1], exponent[,1])
+df_plot = brain_property[seq(1,100*length(age)),]
+g <- plot_df(df_plot , x_var="ages", y_var="brains", x_lab="Age", y_lab="Brain/Cognition", g_title = "Maintenance")
+
+values <- c(mean(baseline), mean(scaling), 1.2)
+person1 = select_closest(baseline[,1], scaling[,1], exponent[,1], values)$closest
+
+values <- c(mean(baseline), mean(scaling), 2)
+person2 = select_closest(baseline[,1], scaling[,1], exponent[,1], values)$closest
+
+df1 <- subset(brain_property, people==person1)
+g2 <- g + geom_line(data=df1, aes(x=ages, y=brains), color = "green")
+df2 <- subset(brain_property, people==person2)
+g2 <- g2 + geom_line(data=df2, aes(x=ages, y=brains), color = "red")
+
+y11 <- df1$brains[df1$ages==x1]
+y12 <- df1$brains[df1$ages==x2]
+
+g2 <- g2 + geom_segment(aes(x = x1, y = y11, xend = x2, yend = y12), arrow = arrow(length = unit(0.5, "cm")), color="green", linewidth = 2)
+
+y21 <- df2$brains[df2$ages==x1]
+y22 <- df2$brains[df2$ages==x2]
+
+g2 <- g2 + geom_segment(aes(x = x1, y = y21, xend = x2, yend = y22), arrow = arrow(length = unit(0.5, "cm")), color="red", linewidth = 2)
+
+g2 <- g2 + geom_hline(yintercept=80, linetype="dashed", color = "black")
+g2 <- g2 + ylim(68, 112)
+
+g2        
+ggsave("Fig2b.png")  
+```
+
+## Cognitive Reserve (Cognition against Brain, Figure 3 in paper)
+
+Generate parameters for two (correlated) brain properties, and generate cognition from simple average (could use more complex nonlinear combination).
+
+Then select one person with higher than expected maintenance of second brain property, to compare with someone else with average values on both brain properties.
+
+```{r temp}
+brain_property <- gen_df(age, baseline[,1], scaling[,1], exponent[,1])
+brain_property1 <- brain_property$brains
+brain_property <- gen_df(age, baseline[,2], scaling[,2], exponent[,2])
+brain_property2 <- brain_property$brains
+
+# cognition = (brain_property1 + brain_property2) / 2 # straight average
+# below equivalent, but illustrates how could be nonlinear mapping from brain to cog
+cognition1 = f_x(brain_property1, x0 = 100, baseline = 100, scaling = 1, exponent = 1) # linear
+cognition2 = f_x(brain_property2, x0 = 100, baseline = 100, scaling = 1, exponent = 1) # linear
+
+cognition = (cognition1 + cognition2) / 2 # straight average
+
+people = brain_property$people; ages = brain_property$ages
+df = data.frame(people, ages, brain_property1, brain_property2, cognition)
+
+# Find someone with average values on brain property 1, but slow decline in property 2
+values <- c(mean(baseline), mean(scaling), mean(exponent))
+dist1 = select_closest(baseline[,1], scaling[,1], exponent[,1], values)$distances
+values <- c(mean(baseline), mean(scaling), 1.5)
+dist2 = select_closest(baseline[,2], scaling[,2], exponent[,2], values)$distances
+dist = dist1 + dist2
+person1 = which(dist == min(dist))
+
+# Find someone else with average values on both brain properties
+#values <- c(mean(baseline), mean(scaling), mean(exponent))
+#dist1 = select_closest(baseline[,1], scaling[,1], exponent[,1], values)$distances
+values <- c(mean(baseline), mean(scaling), mean(exponent))
+dist2 = select_closest(baseline[,2], scaling[,2], exponent[,2], values)$distances
+dist = dist1 + dist2
+person2 = which(dist == min(dist))
+```
+
+Plot first brain property against age:
+
+```{r}
+df_plot = df[seq(1,100*length(age)),]
+g <- plot_df(df_plot, x_var = "ages", y_var="brain_property1", x_lab="Age", y_lab="Brain Property 1", g_title = "Equivalent Brain Property 1")
+
+df1 <- subset(df, people==person1)
+g <- g +  geom_line(data=df1, aes(x=ages, y=brain_property1), color = "green")
+df2 <- subset(df, people==person2)
+g <- g + geom_line(data=df2, aes(x=ages, y=brain_property1), color = "blue")
+
+y11 <- df1$brain_property1[df1$ages==x1]
+y12 <- df1$brain_property1[df1$ages==x2]
+
+g <- g + geom_segment(aes(x = x1, y = y11, xend = x2, yend = y12), arrow = arrow(length = unit(0.5, "cm")), color="green", linewidth = 2)
+
+y21 <- df2$brain_property1[df2$ages==x1]
+y22 <- df2$brain_property1[df2$ages==x2]
+
+g <- g + geom_segment(aes(x = x1, y = y21, xend = x2, yend = y22), arrow = arrow(length = unit(0.5, "cm")), color="blue", linewidth = 2)
+
+g    
+ggsave("Fig3a.png")  
+```
+
+Plot second brain property against age:
+
+```{r}
+df_plot = df[seq(1,100*length(age)),]
+g <- plot_df(df_plot, x_var = "ages", y_var="brain_property2", x_lab="Age", y_lab="Brain Property 2", g_title = "Different Maintenance of Brain Property 2")
+
+df1 <- subset(df, people==person1)
+g <- g +  geom_line(data=df1, aes(x=ages, y=brain_property2), color = "green")
+df2 <- subset(df, people==person2)
+g <- g + geom_line(data=df2, aes(x=ages, y=brain_property2), color = "blue")
+
+y11 <- df1$brain_property2[df1$ages==x1]
+y12 <- df1$brain_property2[df1$ages==x2]
+
+g <- g + geom_segment(aes(x = x1, y = y11, xend = x2, yend = y12), arrow = arrow(length = unit(0.5, "cm")), color="green", linewidth = 2)
+
+y21 <- df2$brain_property2[df2$ages==x1]
+y22 <- df2$brain_property2[df2$ages==x2]
+
+g <- g + geom_segment(aes(x = x1, y = y21, xend = x2, yend = y22), arrow = arrow(length = unit(0.5, "cm")), color="blue", linewidth = 2)
+
+g
+ggsave("Fig3b.png")  
+```
+
+Plot cognition against first brain property (illustrating cognitive reserve):
+
+```{r}
+df_plot = df[seq(1,100*length(age)),]
+g <- plot_df(df_plot, x_var = "brain_property1", y_var="cognition", x_lab="Brain Property 1", y_lab="Cognition", g_title = "Cognitive Reserve according to Brain Property 1")
+
+df1 <- subset(df, people==person1)
+g1 <- g +  geom_line(data=df1, aes(x=brain_property1, y=cognition), color = "green")
+df2 <- subset(df, people==person2)
+g1 <- g1 + geom_line(data=df2, aes(x=brain_property1, y=cognition), color = "blue")
+
+x11 <- df1$brain_property1[df1$ages==x1]
+x12 <- df1$brain_property1[df1$ages==x2]
+
+y11 <- df1$cognition[df1$ages==x1]
+y12 <- df1$cognition[df1$ages==x2]
+
+g1 <- g1 + geom_segment(aes(x = x11, y = y11, xend = x12, yend = y12), arrow = arrow(length = unit(0.5, "cm")), color="green", linewidth = 2)
+
+x21 <- df2$brain_property1[df2$ages==x1]
+x22 <- df2$brain_property1[df2$ages==x2]
+
+y21 <- df2$cognition[df1$ages==x1]
+y22 <- df2$cognition[df1$ages==x2]
+
+g1 <- g1 + geom_segment(aes(x = x21, y = y21, xend = x22, yend = y22), arrow = arrow(length = unit(0.5, "cm")), color="blue", linewidth = 2)
+
+g1 <- g1 + geom_hline(yintercept=80, linetype="dashed", color = "black")
+
+g1    
+ggsave("Fig3c.png")  
+```
+
+Plot cognition against second brain property (illustrating cognitive frailty):
+
+```{r}
+g <- plot_df(df_plot, x_var = "brain_property2", y_var="cognition", x_lab="Brain Property 2", y_lab="Cognition", g_title = "Cognitive Frailty according to Brain Property 2")
+df1 <- subset(df, people==person1)
+g2 <- g +  geom_line(data=df1, aes(x=brain_property2, y=cognition), color = "green")
+df2 <- subset(df, people==person2)
+g2 <- g2 + geom_line(data=df2, aes(x=brain_property2, y=cognition), color = "blue")
+
+x11 <- df1$brain_property2[df1$ages==x1]
+x12 <- df1$brain_property2[df1$ages==x2]
+
+y11 <- df1$cognition[df1$ages==x1]
+y12 <- df1$cognition[df1$ages==x2]
+
+g2 <- g2 + geom_segment(aes(x = x11, y = y11, xend = x12, yend = y12), arrow = arrow(length = unit(0.5, "cm")), color="green", linewidth = 2)
+
+x21 <- df2$brain_property2[df2$ages==x1]
+x22 <- df2$brain_property2[df2$ages==x2]
+
+y21 <- df2$cognition[df1$ages==x1]
+y22 <- df2$cognition[df1$ages==x2]
+
+g2 <- g2 + geom_segment(aes(x = x21, y = y21, xend = x22, yend = y22), arrow = arrow(length = unit(0.5, "cm")), color="blue", linewidth = 2)
+
+g2 <- g2 + geom_hline(yintercept=80, linetype="dashed", color = "black")
+
+g2 
+ggsave("Fig3d.png")  
+```
+
+
+
+
+
+
