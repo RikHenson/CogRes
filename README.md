@@ -1,0 +1,1 @@
+This repo contains 1) R markdown code for simulations of cognitive reserve associated with a paper submitted for publication ("CogRes_Simulations.Rmd"), 2) R code ("CogRes_Data.R") for predicting cognition using CamCAN data on gray-matter, white-matter and fMRI connectivity (in "cog_res_data.csv").
